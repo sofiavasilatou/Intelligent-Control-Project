@@ -22,30 +22,26 @@ KINEMATIC_OBS = {
     "order": "sorted",
 }
 
-
 def make_env(render_mode=None):
     env = gym.make(
-        "intersection-v0",  # MANDATORY: Matches your specific project curriculum requirement
+        "intersection-v0",
         render_mode=render_mode,
         config={
             "observation": KINEMATIC_OBS,
             "action": {"type": "DiscreteMetaAction"},
 
-            # Longer duration allows the agent room to yield and cross completely
             "duration": 20,
 
-            # Dense reward scheme
-            "reward_weights": [1, 0.0, 0.0, 0.1, 0.05, 0.0],
-            "normalize_reward": False,       # CRITICAL FIX: Disables early 4-step truncation!
-            "collision_reward": -5.0,       # Heavy penalty for crashing
-            "high_speed_reward": 1.0,       # Reward for moving fast
-            "arrived_reward": 5.0,          # Big bonus for crossing completely
+            # DELETE this line — it does nothing, _agent_rewards() never reads it
+            # "reward_weights": [1, 0.0, 0.0, 0.1, 0.05, 0.0],
 
-            # Traffic settings (manageable density for stable policy growth)
-            "initial_vehicle_count": 5,     
+            "normalize_reward": False,
+            "collision_reward": -10.0,      # was -5.0 — make crashing dominate speed bonus
+            "high_speed_reward": 0.4,       # was 1.0 — reduce per-step speed incentive
+            "arrived_reward": 5.0,          # fine as-is
+
+            "initial_vehicle_count": 5,
             "spawn_probability": 0.4,
-
-            # Give the ego vehicle clear room to establish a safe path
             "controlled_vehicles": 1,
         },
     )

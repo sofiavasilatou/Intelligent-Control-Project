@@ -94,15 +94,20 @@ class RuleBasedController:
             x = obs[i,F_X]
             y = obs[i,F_Y]
 
-            dist = np.sqrt(x**2+y**2)
-
-            min_dist=min(min_dist,dist)
-
             # vehicle approaching intersection area
-            if abs(x) < 0.25 and abs(y) < 0.25:
+            # Distance from ego
+            dist = np.sqrt(x**2 + y**2)
 
-                danger=True
-                n_threats+=1
+            # Relative approach speed
+            vx = obs[i, F_VX]
+            vy = obs[i, F_VY]
+
+            # Vehicle moving toward ego
+            closing = -(vx*x + vy*y)
+
+            if dist < 0.25 and closing > 0:
+                danger = True
+                n_threats += 1
 
         if danger:
             action=SLOWER

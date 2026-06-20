@@ -24,7 +24,7 @@ class SafePPOController:
     """
 
     def __init__(self, model_path, normalizer_path="models/vecnormalize.pkl",
-                 danger_dist=0.20, deterministic=True):
+                 danger_dist=0.35, deterministic=True):
         self.model = PPO.load(model_path)
         self.danger_dist = danger_dist
         self.deterministic = deterministic
