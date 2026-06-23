@@ -10,11 +10,9 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 from env_config import make_env
 
-# Action indices
 IDLE   = 1
 SLOWER = 4
 
-# Feature indices: [presence, x, y, vx, vy, cos_h, sin_h]
 F_PRESENCE = 0
 F_X        = 1
 F_Y        = 2
@@ -25,18 +23,8 @@ N_STACK = 4   # must match train_ppo.py
 
 
 class SafePPOController:
-    """
-    Parameters
-    ----------
-    model_path      : path to models/ppo_final.zip
-    normalizer_path : path to models/vecnormalize.pkl
-    danger_dist     : normalised distance threshold for the shield
-    deterministic   : use deterministic actions
-    """
-
     def __init__(self, model_path, normalizer_path="models/vecnormalize.pkl",
                  danger_dist=0.15, deterministic=True):
-        # Strip .zip if present
         if model_path.endswith(".zip"):
             model_path = model_path[:-4]
         self.model         = PPO.load(model_path)
@@ -59,61 +47,53 @@ class SafePPOController:
         print(f"[SafePPOController] Loaded model from {model_path}")
 
     def reset(self, seed=None):
-        """Clear the frame buffer at the start of each episode."""
         self.frames.clear()
 
     def _get_stacked_obs(self, observation):
-        """Normalize + stack frames, same as PPOController."""
-        obs = np.array(observation, dtype=np.float32).flatten()
+        # obs shape: (15, 7)
+        obs = np.array(observation, dtype=np.float32)
 
+        # Normalize
         if self.normalizer is not None:
-            obs_batch = obs[np.newaxis, ...]
-            obs_batch = self.normalizer.normalize_obs(obs_batch)
-            obs = obs_batch[0]
+            obs_batch = obs[np.newaxis, ...]                     # (1, 15, 7)
+            obs_batch = self.normalizer.normalize_obs(obs_batch) # (1, 15, 7)
+            obs = obs_batch[0]                                   # (15, 7)
 
+        # Cold start
         if len(self.frames) == 0:
             for _ in range(self.n_stack):
-                self.frames.append(obs)
+                self.frames.append(obs.copy())
         else:
-            self.frames.append(obs)
+            self.frames.append(obs.copy())
 
-        stacked = np.concatenate(list(self.frames), axis=0)
-        return stacked[np.newaxis, ...]
+        # Stack along feature axis: (15, 7) x 4 → (15, 28)
+        stacked = np.concatenate(list(self.frames), axis=1)    # (15, 28)
+        return stacked[np.newaxis, ...]                         # (1, 15, 28)
 
     def _is_dangerous(self, observation):
-        """
-        Check raw (un-normalised) observation for imminent danger.
-        Only shields when ego is slow (not yet committed to crossing).
-        Returns (is_dangerous, danger_level).
-        """
         obs    = np.array(observation, dtype=float)
         ego_vx = obs[0, F_VX]
 
-        # If already committed to crossing, do not override
+        # Don't shield mid-crossing
         if ego_vx > 0.6:
             return False, "safe"
 
         for i in range(1, obs.shape[0]):
             if obs[i, F_PRESENCE] < 0.5:
                 continue
-
             x  = obs[i, F_X]
             y  = obs[i, F_Y]
             vx = obs[i, F_VX]
             vy = obs[i, F_VY]
-
             dist = np.sqrt(x**2 + y**2)
 
-            # Critical zone: anything very close
             if dist < 0.07:
                 return True, "critical"
 
-            # Tailgating: vehicle directly ahead, ego is faster
             if x > 0 and abs(y) < 0.08 and dist < 0.12:
                 if ego_vx > vx + 0.05:
                     return True, "tailgating"
 
-            # Lateral approach: closing vehicle from any direction
             if dist < self.danger_dist:
                 dx = x / (dist + 1e-9)
                 dy = y / (dist + 1e-9)
@@ -124,12 +104,10 @@ class SafePPOController:
         return False, "safe"
 
     def act(self, observation):
-        # Get PPO action using stacked frames
-        stacked_obs      = self._get_stacked_obs(observation)
-        proposed, _      = self.model.predict(stacked_obs, deterministic=self.deterministic)
-        proposed         = int(proposed[0])
-
-        # Check shield on raw observation
+        stacked_obs             = self._get_stacked_obs(observation)
+        proposed, _             = self.model.predict(stacked_obs,
+                                                     deterministic=self.deterministic)
+        proposed                = int(proposed[0])
         dangerous, danger_level = self._is_dangerous(observation)
 
         if dangerous:
@@ -139,7 +117,7 @@ class SafePPOController:
             action = proposed
 
         return action, {
-            "controller":      "safe_ppo_frame",
+            "controller":      "safe_ppo",
             "proposed_action": proposed,
             "shielded":        dangerous,
             "danger_level":    danger_level,

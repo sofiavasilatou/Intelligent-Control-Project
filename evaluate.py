@@ -9,7 +9,7 @@ Usage
     python evaluate.py --controllers random rule_based
 
     # All controllers:
-    python evaluate.py --model models/ppo_final.zip
+    python evaluate.py --model models/ppo_final
 
     # Quick smoke test:
     python evaluate.py --episodes 5 --controllers random
@@ -37,8 +37,19 @@ def compute_ttc(obs):
     return min_ttc
 
 
+def _episode_arrived(info):
+    """
+    Check if the ego vehicle arrived successfully.
+    highway-env does NOT put 'arrived' directly in info.
+    Instead, arrival is signalled by info["rewards"]["arrived_reward"] == 1.0
+    """
+    rewards = info.get("rewards", {})
+    return int(rewards.get("arrived_reward", 0.0) >= 1.0)
+
+
 def run_episodes(controller, n_episodes, base_seed):
-    rewards, steps, crashes, ttcs, shield_steps, total_steps = [], [], [], [], [], []
+    rewards, steps, crashes, arrivals, ttcs, shield_steps, total_steps = \
+        [], [], [], [], [], [], []
 
     env = make_env()
 
@@ -47,9 +58,9 @@ def run_episodes(controller, n_episodes, base_seed):
         controller.reset(seed=base_seed + ep)
 
         total_reward = 0.0
-        ep_steps = 0
-        ep_min_ttc = float("inf")
-        ep_shield = 0
+        ep_steps     = 0
+        ep_min_ttc   = float("inf")
+        ep_shield    = 0
 
         while True:
             action, act_info = controller.act(obs)
@@ -61,14 +72,23 @@ def run_episodes(controller, n_episodes, base_seed):
 
             obs, reward, terminated, truncated, info = env.step(action)
             total_reward += reward
-            ep_steps += 1
+            ep_steps     += 1
 
             if terminated or truncated:
                 break
 
         rewards.append(total_reward)
         steps.append(ep_steps)
-        crashes.append(int(info.get("crashed", False)))
+
+        # Three mutually exclusive outcomes:
+        #   crashed  → info["crashed"] = True
+        #   arrived  → info["rewards"]["arrived_reward"] = 1.0
+        #   timeout  → truncated, neither crashed nor arrived
+        crashed = int(info.get("crashed", False))
+        arrived = _episode_arrived(info)
+
+        crashes.append(crashed)
+        arrivals.append(arrived)
         ttcs.append(ep_min_ttc if ep_min_ttc < float("inf") else np.nan)
         shield_steps.append(ep_shield)
         total_steps.append(ep_steps)
@@ -78,9 +98,14 @@ def run_episodes(controller, n_episodes, base_seed):
 
     env.close()
 
+    crash_rate   = np.mean(crashes)
+    arrival_rate = np.mean(arrivals)
+    timeout_rate = 1.0 - crash_rate - arrival_rate
+
     return {
-        "success_rate":   1 - np.mean(crashes),
-        "collision_rate": np.mean(crashes),
+        "success_rate":   arrival_rate,
+        "timeout_rate":   timeout_rate,
+        "collision_rate": crash_rate,
         "avg_reward":     np.mean(rewards),
         "std_reward":     np.std(rewards),
         "avg_steps":      np.mean(steps),
@@ -94,13 +119,12 @@ def main():
     parser.add_argument("--episodes",    type=int, default=100)
     parser.add_argument("--seed",        type=int, default=42)
     parser.add_argument("--model",       type=str, default=None,
-                        help="Path to trained PPO .zip file")
+                        help="Path to trained PPO model (without .zip)")
     parser.add_argument("--controllers", nargs="+",
                         default=["random", "rule_based", "ppo", "safe_ppo"],
                         choices=["random", "rule_based", "ppo", "safe_ppo"])
     args = parser.parse_args()
 
-    # Build the list of (name, controller) to evaluate
     to_eval = []
     for name in args.controllers:
         if name == "random":
@@ -109,18 +133,17 @@ def main():
             to_eval.append(("rule_based", RuleBasedController()))
         elif name == "ppo":
             if args.model is None:
-                print("[SKIP] ppo — pass --model path/to/ppo_final.zip")
+                print("[SKIP] ppo — pass --model path/to/ppo_final")
                 continue
-            from ppo_controller import PPOController
+            from ppo_controller_frame import PPOController
             to_eval.append(("ppo", PPOController(args.model)))
         elif name == "safe_ppo":
             if args.model is None:
-                print("[SKIP] safe_ppo — pass --model path/to/ppo_final.zip")
+                print("[SKIP] safe_ppo — pass --model path/to/ppo_final")
                 continue
-            from safe_ppo_controller import SafePPOController
+            from safe_ppo_controller_frame import SafePPOController
             to_eval.append(("safe_ppo", SafePPOController(args.model)))
 
-    # Run evaluation
     all_results = {}
     for name, ctrl in to_eval:
         print(f"\n{'='*50}")
@@ -128,13 +151,20 @@ def main():
         print(f"{'='*50}")
         all_results[name] = run_episodes(ctrl, args.episodes, args.seed)
 
-    # Print comparison table
     if not all_results:
         print("Nothing to evaluate.")
         return
 
-    metrics = ["success_rate", "collision_rate", "avg_reward",
-               "std_reward", "avg_steps", "avg_min_ttc", "shield_rate"]
+    metrics = [
+        "success_rate",    # actually crossed the intersection
+        "timeout_rate",    # ran out of time
+        "collision_rate",  # crashed
+        "avg_reward",
+        "std_reward",
+        "avg_steps",
+        "avg_min_ttc",
+        "shield_rate",
+    ]
 
     col_w = 14
     print("\n" + "=" * (25 + col_w * len(all_results)))
@@ -149,6 +179,8 @@ def main():
             row += f"{stats[m]:<{col_w}.4f}"
         print(row)
     print("=" * (25 + col_w * len(all_results)))
+    print()
+    print("  NOTE: success_rate + timeout_rate + collision_rate = 1.0")
 
 
 if __name__ == "__main__":
