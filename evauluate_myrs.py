@@ -1,190 +1,162 @@
 """
-evaluate.py
-===========
-Run all controllers and print a comparison table.
+Project 4: Safe Autonomous Driving at Intersections
+Generic evaluation harness: runs N episodes with a given policy function
+and prints summary statistics to the console.
 
-Usage
------
-    # Baselines only (no trained model needed):
-    python evaluate.py --controllers random rule_based
+Designed to be policy-agnostic: today it evaluates the uniform random
+policy, but the same `evaluate()` function works for your PPO agent (or
+any other controller) later — just pass in a different `policy_fn`.
 
-    # All controllers:
-    python evaluate.py --model models/ppo_final.zip
+A policy_fn has the signature:
+    action = policy_fn(observation)
 
-    # Quick smoke test:
-    python evaluate.py --episodes 5 --controllers random
+Run (random policy, default):
+    python evaluate.py --episodes 100 --seed 0
+
+The script prints per-episode lines as it goes, then a summary block at
+the end with mean/std for reward and episode length, plus crash and
+success rates. No files are written; this is for quick console checks
+during development. Use random_baseline.py if you want the JSON dump
+for the report.
 """
 
 import argparse
+
+import gymnasium as gym
+import highway_env  # noqa: F401  (registers the env)
 import numpy as np
 
-from env_config_myrs import make_env
-from random_controller import RandomController
-from rule_based_myrs import RuleBasedController
+from env_config_myrs import ENV_ID, get_env_config
 
 
+def make_env():
+    """Build intersection-v0 using the shared project config, so every
+    policy evaluated with this script sees the exact same observation/
+    action settings."""
+    return gym.make(
+        ENV_ID,
+        render_mode=None,
+        config=get_env_config(),
+    )
 
-def compute_ttc(obs):
 
-    min_ttc = float("inf")
+def random_policy(observation, env):
+    """Uniform random policy: ignores the observation entirely."""
+    return env.action_space.sample()
 
-    ego = obs[0]
 
-    ego_vx = ego[3]
-    ego_vy = ego[4]
+def run_episode(env, policy_fn, seed):
+    """Run a single episode with the given policy function.
 
-    for i in range(1, obs.shape[0]):
+    policy_fn is called as policy_fn(observation, env) so it has access
+    to env.action_space if needed (useful for the random policy, and
+    harmless for trained policies that ignore the env argument).
+    """
+    obs, info = env.reset(seed=seed)
+    terminated, truncated = False, False
 
-        if obs[i,0] < 0.5:
-            continue
+    episode_reward = 0.0
+    steps = 0
+    crashed = False
 
-        x = obs[i,1]
-        y = obs[i,2]
+    while not (terminated or truncated):
+        action = policy_fn(obs, env)
+        obs, reward, terminated, truncated, info = env.step(action)
+        episode_reward += reward
+        steps += 1
 
-        vx = obs[i,3]
-        vy = obs[i,4]
+        if info.get("crashed", False):
+            crashed = True
 
-        rel_x = x
-        rel_y = y
-
-        rel_vx = vx - ego_vx
-        rel_vy = vy - ego_vy
-
-        distance = np.sqrt(
-            rel_x**2 + rel_y**2
-        )
-
-        rel_speed = np.sqrt(
-            rel_vx**2 + rel_vy**2
-        )
-
-        if rel_speed > 0.01:
-
-            ttc = distance / rel_speed
-
-            min_ttc = min(min_ttc, ttc)
-
-    return min_ttc
-def run_episodes(controller, n_episodes, base_seed):
-    rewards, steps, crashes, successes, ttcs, shield_steps, total_steps = [], [], [], [], [], [], []
-
-    env = make_env()
-
-    for ep in range(n_episodes):
-        obs, info = env.reset(seed=base_seed + ep)
-        controller.reset(seed=base_seed + ep)
-
-        total_reward = 0.0
-        ep_steps = 0
-        ep_min_ttc = float("inf")
-        ep_shield = 0
-
-        while True:
-            action, act_info = controller.act(obs)
-
-            ttc = compute_ttc(np.array(obs))
-            ep_min_ttc = min(ep_min_ttc, ttc)
-            if act_info.get("shielded", False):
-                ep_shield += 1
-
-            obs, reward, terminated, truncated, info = env.step(action)
-            total_reward += reward
-            ep_steps += 1
-
-            if terminated or truncated:
-                break
-
-        rewards.append(total_reward)
-        steps.append(ep_steps)
-        crashes.append(int(info.get("crashed", False)))
-        success = terminated and not info.get("crashed", False)
-
-        successes.append(int(success))
-        ttcs.append(ep_min_ttc if ep_min_ttc < float("inf") else np.nan)
-        shield_steps.append(ep_shield)
-        total_steps.append(ep_steps)
-
-        if (ep + 1) % 20 == 0:
-            print(f"    {ep+1}/{n_episodes} episodes done")
-
-    env.close()
+    # intersection-v0 terminates (not truncates) the episode either on a
+    # collision or when the vehicle has successfully crossed the
+    # intersection (has_arrived). Truncation only happens on a timeout,
+    # i.e. the vehicle neither crashed nor arrived in time — that is a
+    # failure to make progress, NOT a success.
+    #
+    # So: success = the episode ended via `terminated` and no crash was
+    # ever flagged (i.e. it ended because the vehicle arrived).
+    success = terminated and not crashed
 
     return {
-        "success_rate":   np.mean(successes),
-        "collision_rate": np.mean(crashes),
-        "avg_reward":     np.mean(rewards),
-        "std_reward":     np.std(rewards),
-        "avg_steps":      np.mean(steps),
-        "avg_min_ttc":    np.nanmean(ttcs),
-        "shield_rate":    sum(shield_steps) / max(sum(total_steps), 1),
+        "reward": episode_reward,
+        "steps": steps,
+        "crashed": crashed,
+        "success": success,
     }
 
 
+def evaluate(policy_fn, episodes=100, seed=0, label="policy", verbose=True):
+    """Run `episodes` evaluation episodes and return a summary dict.
+
+    Prints per-episode and summary stats to the console if verbose=True.
+    """
+    env = make_env()
+
+    rewards = np.zeros(episodes)
+    lengths = np.zeros(episodes, dtype=int)
+    crashes = np.zeros(episodes, dtype=bool)
+    successes = np.zeros(episodes, dtype=bool)
+
+    for ep in range(episodes):
+        result = run_episode(env, policy_fn, seed=seed + ep)
+        rewards[ep] = result["reward"]
+        lengths[ep] = result["steps"]
+        crashes[ep] = result["crashed"]
+        successes[ep] = result["success"]
+
+        if verbose:
+            print(
+                f"[{label} | ep {ep:03d}] "
+                f"reward={result['reward']:.2f} "
+                f"steps={result['steps']} "
+                f"crashed={result['crashed']} "
+                f"success={result['success']}"
+            )
+
+    env.close()
+
+    summary = {
+        "label": label,
+        "episodes": episodes,
+        "mean_reward": float(rewards.mean()),
+        "std_reward": float(rewards.std()),
+        "mean_length": float(lengths.mean()),
+        "std_length": float(lengths.std()),
+        "crash_rate": float(crashes.mean()),
+        "success_rate": float(successes.mean()),
+    }
+
+    if verbose:
+        print(f"\n=== {label}: evaluation summary over {episodes} episodes ===")
+        print(f"Reward       : {summary['mean_reward']:.3f} +/- {summary['std_reward']:.3f}")
+        print(f"Episode length: {summary['mean_length']:.1f} +/- {summary['std_length']:.1f} steps")
+        print(f"Crash rate   : {summary['crash_rate']*100:.1f}%")
+        print(f"Success rate : {summary['success_rate']*100:.1f}%")
+
+    return summary
+
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--episodes",    type=int, default=100)
-    parser.add_argument("--seed",        type=int, default=42)
-    parser.add_argument("--model",       type=str, default=None,
-                        help="Path to trained PPO .zip file")
-    parser.add_argument("--controllers", nargs="+",
-                        default=["random", "rule_based", "ppo", "safe_ppo"],
-                        choices=["random", "rule_based", "ppo", "safe_ppo"])
+    parser = argparse.ArgumentParser(description="Evaluate a controller on intersection-v0")
+    parser.add_argument("--episodes", type=int, default=100,
+                         help="Number of evaluation episodes")
+    parser.add_argument("--seed", type=int, default=0,
+                         help="Base seed; episode i uses seed + i")
     args = parser.parse_args()
 
-    # Build the list of (name, controller) to evaluate
-    to_eval = []
-    for name in args.controllers:
-        if name == "random":
-            to_eval.append(("random", RandomController()))
-        elif name == "rule_based":
-
-            print("USING RULE-BASED CONTROLLER")
-
-            to_eval.append(
-                ("rule_based", RuleBasedController())
-            )
-        elif name == "ppo":
-            if args.model is None:
-                print("[SKIP] ppo — pass --model path/to/ppo_final.zip")
-                continue
-            from ppo_controller import PPOController
-            to_eval.append(("ppo", PPOController(args.model)))
-        elif name == "safe_ppo":
-            if args.model is None:
-                print("[SKIP] safe_ppo — pass --model path/to/ppo_final.zip")
-                continue
-            from safe_ppo_controller import SafePPOController
-            to_eval.append(("safe_ppo", SafePPOController(args.model)))
-
-    # Run evaluation
-    all_results = {}
-    for name, ctrl in to_eval:
-        print(f"\n{'='*50}")
-        print(f"  Evaluating: {name}  ({args.episodes} episodes)")
-        print(f"{'='*50}")
-        all_results[name] = run_episodes(ctrl, args.episodes, args.seed)
-
-    # Print comparison table
-    if not all_results:
-        print("Nothing to evaluate.")
-        return
-
-    metrics = ["success_rate", "collision_rate", "avg_reward",
-               "std_reward", "avg_steps", "avg_min_ttc", "shield_rate"]
-
-    col_w = 14
-    print("\n" + "=" * (25 + col_w * len(all_results)))
-    print("  COMPARISON TABLE")
-    print("=" * (25 + col_w * len(all_results)))
-    header = f"  {'metric':<23}" + "".join(f"{n:<{col_w}}" for n in all_results)
-    print(header)
-    print("-" * (25 + col_w * len(all_results)))
-    for m in metrics:
-        row = f"  {m:<23}"
-        for stats in all_results.values():
-            row += f"{stats[m]:<{col_w}.4f}"
-        print(row)
-    print("=" * (25 + col_w * len(all_results)))
+    # Currently wired to the random policy. To evaluate a trained model
+    # later, define a new policy_fn, e.g.:
+    #
+    #   from stable_baselines3 import PPO
+    #   model = PPO.load("ppo_intersection.zip")
+    #
+    #   def ppo_policy(observation, env):
+    #       action, _ = model.predict(observation, deterministic=True)
+    #       return action
+    #
+    # and call evaluate(ppo_policy, episodes=..., seed=..., label="PPO").
+    evaluate(random_policy, episodes=args.episodes, seed=args.seed, label="random")
 
 
 if __name__ == "__main__":
