@@ -1,5 +1,3 @@
-"""PPO Controller with Frame Stacking and Observation Normalization"""
-
 import numpy as np
 from collections import deque
 from stable_baselines3 import PPO

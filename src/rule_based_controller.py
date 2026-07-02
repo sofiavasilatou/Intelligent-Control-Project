@@ -4,7 +4,6 @@ SLOWER = 0
 IDLE   = 1
 FASTER = 2
 
-# Feature indices: [presence, x, y, vx, vy, cos_h, sin_h]
 F_PRESENCE = 0
 F_X        = 1
 F_Y        = 2
@@ -46,13 +45,11 @@ class RuleBasedController:
 
             dist = np.sqrt(x**2 + y**2)
 
-            # Critical zone: stop regardless of direction
             if dist < self.critical_dist:
                 critical_danger = True
                 n_threats += 1
                 continue
 
-            # Yield zone: check if vehicle is closing in
             if dist < self.danger_dist:
                 dx = x / (dist + 1e-9)
                 dy = y / (dist + 1e-9)
@@ -63,7 +60,6 @@ class RuleBasedController:
                     approach_danger = True
                     n_threats += 1
 
-        # Decision
         if critical_danger:
             action = SLOWER if ego_vx > 0.05 else IDLE
         elif approach_danger:

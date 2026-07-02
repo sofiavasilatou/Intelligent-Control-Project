@@ -5,6 +5,7 @@ import numpy as np
 from env_config import make_env
 from random_controller import RandomController
 from rule_based_controller import RuleBasedController
+from dqn_controller import DQNController
 
 
 def compute_ttc(obs):
@@ -97,10 +98,10 @@ def main():
     parser.add_argument("--episodes",    type=int, default=100)
     parser.add_argument("--seed",        type=int, default=42)
     parser.add_argument("--model",       type=str, default=None,
-                        help="Path to trained PPO model (without .zip)")
+                        help="Path to trained DQN model (without .zip)")
     parser.add_argument("--controllers", nargs="+",
-                        default=["random", "rule_based", "ppo", "safe_ppo"],
-                        choices=["random", "rule_based", "ppo", "safe_ppo"])
+                        default=["random", "rule_based", "dqn"],
+                        choices=["random", "rule_based", "ppo", "safe_ppo", "dqn"])
     args = parser.parse_args()
 
     to_eval = []
@@ -109,6 +110,10 @@ def main():
             to_eval.append(("random", RandomController()))
         elif name == "rule_based":
             to_eval.append(("rule_based", RuleBasedController()))
+        elif name == "dqn":
+            if args.model is None:
+                args.model = "models/dqn_best/best_model.zip"
+            to_eval.append(("dqn", DQNController(args.model)))
         elif name == "ppo":
             if args.model is None:
                 print("[SKIP] ppo — pass --model path/to/ppo_final")

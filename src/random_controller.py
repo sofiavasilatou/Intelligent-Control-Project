@@ -1,11 +1,3 @@
-"""
-Project 4: Safe Autonomous Driving at Intersections
-Simple baseline: uniform random policy over the discrete meta-action space.
-
-Run:
-    python random_myrs.py --episodes 100 --seed 0
-"""
-
 import argparse
 import json
 
@@ -15,7 +7,6 @@ from env_config import make_env
 
 
 class RandomController:
-    """Uniform random policy. Implements the standard controller interface."""
 
     def __init__(self, n_actions: int = None):
         self._n_actions = n_actions

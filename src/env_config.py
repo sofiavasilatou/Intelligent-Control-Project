@@ -1,5 +1,5 @@
 import gymnasium as gym
-import highway_env  # noqa: F401
+import highway_env  
 
 
 KINEMATIC_OBS = {
@@ -12,9 +12,9 @@ KINEMATIC_OBS = {
         "vx": [-20, 20],
         "vy": [-20, 20],
     },
-    "absolute": False,               # Corrected from False
-    "flatten": False,               # Added to match target
-    "observe_intentions": False,    # Added to match target
+    "absolute": False,              
+    "flatten": False,               
+    "observe_intentions": False,    
 }
 
 
@@ -28,17 +28,17 @@ def make_env(render_mode=None):
                 "type": "DiscreteMetaAction",
                 "longitudinal": True,
                 "lateral": False,
-                "target_speeds": [0, 4.5, 9],    # Added to match target
+                "target_speeds": [0, 4.5, 9],    
             },
 
             # Navigation/Routing
-            "destination": "o1",                 # Added to match target
-            "centering_position": [0.5, 0.6],    # Added to match target
+            "destination": "o1",                 
+            "centering_position": [0.5, 0.6],    
 
             # Rewards
             "collision_reward": -5.0,
             "high_speed_reward": 1.0,
-            "arrived_reward": 1.0,               # Corrected from 5.0
+            "arrived_reward": 1.0,              
             "normalize_reward": False,
 
             # Simulation Settings

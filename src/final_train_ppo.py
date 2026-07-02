@@ -27,7 +27,8 @@ N_EPOCHS        = 10
 GAMMA           = 0.99
 GAE_LAMBDA      = 0.95
 CLIP_RANGE      = 0.2
-ENT_COEF        = 0.05
+#ENT_COEF        = 0.05
+ENT_COEF        = 0.01
 EVAL_FREQ       = 20_000
 N_EVAL_EPISODES = 30
 
@@ -91,7 +92,8 @@ if __name__ == "__main__":
         gae_lambda=GAE_LAMBDA,
         clip_range=CLIP_RANGE,
         ent_coef=ENT_COEF,
-        policy_kwargs={"net_arch": [256, 256, 128]},
+        #policy_kwargs={"net_arch": [256, 256, 128]},
+        policy_kwargs={"net_arch": [512, 512, 256]},
         verbose=1,
         tensorboard_log="runs/",
         device="auto",

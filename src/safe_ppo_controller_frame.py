@@ -13,7 +13,7 @@ F_Y        = 2
 F_VX       = 3
 F_VY       = 4
 
-N_STACK = 4   # must match train_ppo.py
+N_STACK = 4   
 
 
 class SafePPOController:
